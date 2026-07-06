@@ -1,0 +1,29 @@
+# Environment / secrets
+.env
+.venv/
+venv/
+
+# Data (raw API dumps are large and reproducible)
+data/raw/
+data/processed/
+data/models/
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
