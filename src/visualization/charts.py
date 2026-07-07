@@ -177,10 +177,33 @@ def artist_radar(track_rows: pd.DataFrame) -> go.Figure:
 
 
 def popularity_timeline(track_rows: pd.DataFrame) -> go.Figure:
-    df = track_rows.sort_values("release_date")
-    fig = px.scatter(
-        df, x="release_date", y="composite_success_score", hover_name="track_name",
-        title="Track Success Over Time", template=TEMPLATE,
+    """Track success over time when release dates exist; otherwise fall back
+    to a ranked view of the artist's catalogue (the bulk export has no dates)."""
+    has_dates = "release_date" in track_rows and track_rows["release_date"].notna().any()
+    if has_dates:
+        df = track_rows.sort_values("release_date")
+        fig = px.scatter(
+            df, x="release_date", y="composite_success_score", hover_name="track_name",
+            title="Track success over time", template=TEMPLATE,
+            color="composite_success_score", color_continuous_scale="Viridis",
+        )
+        return fig
+
+    df = track_rows.sort_values("composite_success_score", ascending=False).head(20)
+    fig = px.bar(
+        df, x="composite_success_score", y="track_name", orientation="h",
+        title="Catalogue by success score", template=TEMPLATE,
         color="composite_success_score", color_continuous_scale="Viridis",
     )
+    fig.update_layout(yaxis={"categoryorder": "total ascending"},
+                      xaxis_title="composite success score", yaxis_title="",
+                      coloraxis_showscale=False, height=max(400, 20 * len(df)))
     return fig
+
+
+def track_table_columns(track_rows: pd.DataFrame) -> list[str]:
+    """Columns for the deep-dive track table, dropping release_date if empty."""
+    cols = ["track_name", "release_date", "primary_genre", "composite_success_score"]
+    if "release_date" not in track_rows or track_rows["release_date"].isna().all():
+        cols.remove("release_date")
+    return cols

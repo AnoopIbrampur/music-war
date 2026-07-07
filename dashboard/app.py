@@ -107,8 +107,13 @@ def main() -> None:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Tracks analyzed", f"{len(tracks):,}")
         c2.metric("Eligible artists", f"{(war['role'] == 'artist').sum():,}")
-        c3.metric("Eligible producers", f"{(war['role'] == 'producer').sum():,}")
-        c4.metric("Eligible songwriters", f"{(war['role'] == 'songwriter').sum():,}")
+        c3.metric("Genres", f"{tracks['primary_genre'].nunique():,}")
+        # Show credit counts only when the data source has them; otherwise a
+        # more useful summary stat than a hard-coded zero.
+        if has_producers:
+            c4.metric("Eligible producers", f"{(war['role'] == 'producer').sum():,}")
+        else:
+            c4.metric("Median popularity", f"{tracks['spotify_popularity'].median():.0f}")
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Model R² (test)", f"{metrics['r2_test']:.3f}")
@@ -245,19 +250,20 @@ def main() -> None:
         if not their_tracks.empty:
             left.plotly_chart(charts.artist_radar(their_tracks), use_container_width=True)
             right.plotly_chart(charts.popularity_timeline(their_tracks), use_container_width=True)
-            st.subheader("Most / least successful tracks")
+            st.subheader("Most successful tracks")
             ranked = their_tracks.sort_values("composite_success_score", ascending=False)
             st.dataframe(
-                ranked[["track_name", "release_date", "primary_genre",
-                        "composite_success_score"]].head(10),
+                ranked[charts.track_table_columns(ranked)].head(10),
                 use_container_width=True, hide_index=True,
             )
 
     # ----------------------------------------------------------- dream team
     with tab["Dream Team Builder"]:
         st.subheader("Build your dream hit-song team")
-        st.caption("Predicted score = replacement level + selected genre/era effects "
-                   "+ each person's WAR coefficient.")
+        st.caption("Predicted score = replacement-level baseline + the primary "
+                   "artist's WAR + half the featured artist's WAR. Producer and "
+                   "songwriter terms appear automatically when the data source "
+                   "carries credits.")
         a = war[war["role"] == "artist"]
         p = war[war["role"] == "producer"]
         w = war[war["role"] == "songwriter"]
@@ -265,9 +271,14 @@ def main() -> None:
         c1, c2 = st.columns(2)
         primary = c1.selectbox("Primary artist", a["name"].sort_values())
         featured = c2.selectbox("Featured artist", ["(none)"] + a["name"].sort_values().tolist())
-        c3, c4 = st.columns(2)
-        producer = c3.selectbox("Producer", ["(none)"] + p["name"].sort_values().tolist())
-        writer = c4.selectbox("Songwriter", ["(none)"] + w["name"].sort_values().tolist())
+
+        producer = writer = "(none)"
+        if not p.empty or not w.empty:
+            c3, c4 = st.columns(2)
+            if not p.empty:
+                producer = c3.selectbox("Producer", ["(none)"] + p["name"].sort_values().tolist())
+            if not w.empty:
+                writer = c4.selectbox("Songwriter", ["(none)"] + w["name"].sort_values().tolist())
 
         score = metrics["replacement_level"]
         breakdown = [("Replacement-level baseline", metrics["replacement_level"])]
@@ -287,11 +298,15 @@ def main() -> None:
             score += add
             breakdown.append((f"{writer} (songwriter)", add))
 
+        score = max(0.0, min(100.0, score))
         st.metric("Predicted composite success score", f"{score:.1f} / 100")
         st.dataframe(
             pd.DataFrame(breakdown, columns=["Component", "Points"]).round(2),
             use_container_width=True, hide_index=True,
         )
+        st.caption(f"For reference, a replacement-level track sits at "
+                   f"{metrics['replacement_level']:.1f}; the dataset's most popular "
+                   f"tracks reach the mid-80s.")
 
     # ---------------------------------------------------------- methodology
     with tab["Methodology"]:
