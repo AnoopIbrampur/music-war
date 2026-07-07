@@ -92,8 +92,8 @@ def main() -> None:
         return
     tracks, war, bridge, artists, metrics = load_data()
 
-    tabs = st.tabs(["Overview", "Artist WAR", "Producer WAR", "Artist Deep Dive",
-                    "Dream Team Builder", "Methodology"])
+    tabs = st.tabs(["Overview", "Artist WAR", "Sound & Success", "Producer WAR",
+                    "Artist Deep Dive", "Dream Team Builder", "Methodology"])
 
     # ---------------------------------------------------------------- overview
     with tabs[0]:
@@ -112,16 +112,66 @@ def main() -> None:
         left, right = st.columns(2)
         left.plotly_chart(charts.score_distribution(tracks), use_container_width=True)
         right.plotly_chart(charts.genre_breakdown(tracks), use_container_width=True)
-        st.plotly_chart(charts.era_breakdown(tracks), use_container_width=True)
+        # Era analysis only makes sense when release dates are present; the
+        # bulk Spotify export has none, so show genre popularity instead.
+        if tracks["era"].nunique() > 1:
+            st.plotly_chart(charts.era_breakdown(tracks), use_container_width=True)
+        else:
+            st.plotly_chart(charts.genre_popularity(tracks), use_container_width=True)
 
     # ---------------------------------------------------------- leaderboards
     with tabs[1]:
         leaderboard_tab(war, "artist", "Artist WAR Leaderboard")
+
+    # ------------------------------------------------------- sound & success
     with tabs[2]:
-        leaderboard_tab(war, "producer", "Producer WAR Leaderboard")
+        st.subheader("Sound & Success")
+        st.caption("What the audio itself says about popularity — the dimension "
+                   "this dataset is richest in.")
+
+        inst = tracks["instrumentalness"].corr(tracks["spotify_popularity"])
+        exp_lift = (tracks.loc[tracks["is_explicit"] == 1, "spotify_popularity"].mean()
+                    - tracks.loc[tracks["is_explicit"] == 0, "spotify_popularity"].mean())
+        best_genre = tracks.groupby("primary_genre")["spotify_popularity"].mean().idxmax()
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Instrumentalness ↔ popularity", f"{inst:+.2f}",
+                  help="Strongest single audio correlate — vocals win")
+        k2.metric("Explicit popularity lift", f"{exp_lift:+.1f} pts")
+        k3.metric("Most popular genre", best_genre)
+
+        st.plotly_chart(charts.audio_popularity_corr(tracks), use_container_width=True)
+        st.info("Every audio feature correlates only weakly with popularity "
+                "(|r| < 0.2). That's the point: sound alone doesn't make a hit — "
+                "which is why *who* is on the track (Artist WAR) explains far more.")
+
+        left, right = st.columns(2)
+        left.plotly_chart(charts.sound_profile_clusters(tracks), use_container_width=True)
+        right.plotly_chart(
+            charts.factor_effect(tracks, "is_explicit", "Explicit vs clean",
+                                 labels={0: "clean", 1: "explicit"}),
+            use_container_width=True,
+        )
+        crew = tracks.assign(crew=tracks["num_artists_on_track"].clip(upper=4))
+        st.plotly_chart(
+            charts.factor_effect(crew, "crew", "Popularity by number of credited artists"),
+            use_container_width=True,
+        )
+
+    # ---------------------------------------------------------- producer WAR
+    with tabs[3]:
+        if (war["role"] == "producer").any():
+            leaderboard_tab(war, "producer", "Producer WAR Leaderboard")
+        else:
+            st.subheader("Producer WAR Leaderboard")
+            st.warning(
+                "No producer credits in the current data source. The bulk Spotify "
+                "export ships track/artist/audio data but no production credits. "
+                "Run MusicBrainz enrichment (`--source api` with a MUSICBRAINZ_CONTACT "
+                "set, or the enrichment step) to populate producer and songwriter WAR."
+            )
 
     # ------------------------------------------------------------ deep dive
-    with tabs[3]:
+    with tabs[4]:
         artist_war = war[war["role"] == "artist"]
         pick = st.selectbox("Choose an artist", artist_war["name"].sort_values())
         row = artist_war[artist_war["name"] == pick].iloc[0]
@@ -148,7 +198,7 @@ def main() -> None:
             )
 
     # ----------------------------------------------------------- dream team
-    with tabs[4]:
+    with tabs[5]:
         st.subheader("Build your dream hit-song team")
         st.caption("Predicted score = replacement level + selected genre/era effects "
                    "+ each person's WAR coefficient.")
@@ -188,7 +238,7 @@ def main() -> None:
         )
 
     # ---------------------------------------------------------- methodology
-    with tabs[5]:
+    with tabs[6]:
         st.markdown(
             f"""
 ### How Music WAR works
