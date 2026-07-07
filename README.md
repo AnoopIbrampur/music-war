@@ -85,25 +85,37 @@ equivalent to a live pull — and gives far more tracks than rate-limited API
 calls would. The `--source api` path is kept intact for anyone with an
 extended-quota Spotify app.
 
-## Key findings (demo dataset)
+## Key findings (real data — 80,393 Spotify tracks, 4,580 artists)
 
-The synthetic demo plants known talent effects, and the model recovers them
-(r > 0.9 vs ground truth) — validating the machinery before real data:
+Model: ridge (α=1, 5-fold CV), test **R² = 0.46 vs 0.16** for a structure-only
+baseline — *who* is on a track explains **~30% more variance** than genre and
+sound alone. That gap is the whole thesis, and the findings below flow from it.
 
-1. **Individual talent matters.** Adding people columns lifts test R² by
-   ~0.5 over a structure-only baseline (genre + era + audio features): who
-   is on the track explains far more than what the track sounds like.
-2. **Ridge beats OLS on wide matrices.** With thousands of person columns,
-   cross-validated shrinkage keeps small-sample coefficients honest.
-3. **The lasso filter is brutal but fair.** A meaningful share of "high
-   WAR" names get zeroed by L1 — ridge-only stars deserve skepticism.
-4. **Featured verses ≈ half a top billing.** The 0.5 billing weight is
-   consistent with the planted data-generating process.
-5. **Replacement level is genre-relative.** The intercept + controls
-   baseline shifts by ~12 points between the strongest and weakest genres.
+1. **WAR is not just popularity** (they correlate 0.80, not 1.0). The gap is
+   the insight: some artists overperform their fame, others ride it.
+2. **Overperformers** — deliver more than a replacement even at their fame
+   level: **Bad Bunny** (WAR 29.8, 95% CI 25.8–34.8), **Rammstein**,
+   **Nicki Minaj**, **Bring Me The Horizon**.
+3. **Coattail riders** — popular but *negative* WAR: **Justin Bieber**
+   (−15.3) and **J Balvin** (−15.4). Their hits are often collabs where,
+   controlling for genre and co-artists, their marginal contribution trails a
+   replacement's. A naive popularity ranking misses this entirely.
+4. **Total-WAR leaders reward prolific excellence**: **The Beatles**,
+   **Arctic Monkeys**, **Arijit Singh**, **Bad Bunny**.
+5. **Best-in-genre**: Doja Cat (dance), System Of A Down (metal) — WAR lets
+   you compare like-for-like within a genre.
+6. **Instrumentalness is the #1 audio popularity-killer** (r = −0.19); every
+   audio feature on its own is weak (|r| < 0.2), which is *why* artist
+   identity dominates.
+7. **Explicit tracks average +4.3 popularity points**, and **collaborations
+   beat solo tracks** — features and co-bills lift outcomes.
+8. **Bootstrap 95% CIs** accompany every artist's WAR, separating robust
+   rankings from small-sample noise; **lasso agreement** flags the most
+   defensible names.
 
-*(Run the pipeline on real API data to regenerate this section with real
-names — the README structure stays the same.)*
+*Names are real; `--source demo` reproduces the same structure on synthetic
+data with known planted effects (recovered at r > 0.9), which is how the model
+itself is validated.*
 
 ## Repository layout
 

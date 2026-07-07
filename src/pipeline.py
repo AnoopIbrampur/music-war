@@ -20,7 +20,11 @@ from src.database.db_manager import DBManager, load_star_schema
 from src.ingestion import synthetic
 from src.modeling.model_evaluator import evaluate
 from src.modeling.sparse_matrix_builder import build_design_matrix
-from src.modeling.war_calculator import bootstrap_confidence_intervals, fit_war_models
+from src.modeling.war_calculator import (
+    bootstrap_confidence_intervals,
+    enrich_artist_war,
+    fit_war_models,
+)
 from src.processing.cleaner import clean_tracks, missing_data_report
 from src.processing.feature_engineer import (
     engineer_artist_features,
@@ -117,6 +121,7 @@ def run(demo: bool = False, bootstrap: bool = False, source: str = "api",
     if bootstrap:
         cis = bootstrap_confidence_intervals(dm, result.ridge_model.alpha_)
         war = war.merge(cis, on="entity_id", how="left")
+    war = enrich_artist_war(war, tracks, track_artists, artists)
     metrics = evaluate(dm, result, tracks)
 
     # ---- outputs for the dashboard

@@ -13,7 +13,7 @@ from src.database import schema
 from src.ingestion import synthetic
 from src.modeling.model_evaluator import evaluate
 from src.modeling.sparse_matrix_builder import build_design_matrix, eligible_entities
-from src.modeling.war_calculator import fit_war_models, interpret
+from src.modeling.war_calculator import enrich_artist_war, fit_war_models, interpret
 from src.processing.cleaner import clean_tracks
 from src.processing.feature_engineer import engineer_collab_features, engineer_track_features
 from src.processing.transformer import build_producer_dim, build_songwriter_dim
@@ -114,6 +114,17 @@ class TestWARModel:
         row = war_result.war_table.iloc[0]
         text = interpret(row, war_result.replacement_level)
         assert row["name"] in text and "replacement" in text
+
+    def test_enrich_artist_war_adds_columns(self, war_result, prepared, dataset):
+        enriched = enrich_artist_war(
+            war_result.war_table, prepared, dataset.track_artists, dataset.artists
+        )
+        for col in ["avg_popularity", "score_std", "overperformance", "genre"]:
+            assert col in enriched.columns
+        artists = enriched[enriched["role"] == "artist"]
+        assert artists["avg_popularity"].notna().all()
+        # overperformance is a mean-zero residual around the popularity trend
+        assert abs(artists["overperformance"].mean()) < 1.0
 
 
 class TestEvaluator:

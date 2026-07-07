@@ -125,6 +125,48 @@ def bootstrap_confidence_intervals(dm: DesignMatrix, alpha_value: float,
     )
 
 
+def enrich_artist_war(war_table: pd.DataFrame, tracks: pd.DataFrame,
+                      track_artists: pd.DataFrame, artists: pd.DataFrame | None = None
+                      ) -> pd.DataFrame:
+    """Augment artist rows with popularity, consistency, and overperformance.
+
+    Adds columns used by the dashboard's "Beyond Popularity" analysis:
+      * avg_popularity   – mean raw Spotify popularity of the artist's tracks
+      * avg_track_score  – mean composite success score
+      * score_std        – std of composite scores (low = consistent hitmaker)
+      * overperformance  – WAR minus what their popularity alone predicts
+                           (positive = overdelivers for their fame level)
+      * genre            – primary genre (for per-genre leaderboards)
+    Non-artist rows keep NaN for these columns.
+    """
+    war = war_table.copy()
+    merged = track_artists.merge(
+        tracks[["track_id", "spotify_popularity", "composite_success_score"]],
+        on="track_id", how="left",
+    )
+    agg = merged.groupby("artist_id").agg(
+        avg_popularity=("spotify_popularity", "mean"),
+        avg_track_score=("composite_success_score", "mean"),
+        score_std=("composite_success_score", "std"),
+    )
+    for col in ["avg_popularity", "avg_track_score", "score_std"]:
+        war[col] = war["entity_id"].map(agg[col])
+
+    if artists is not None and "primary_genre" in artists.columns:
+        genre_map = dict(zip(artists["artist_id"], artists["primary_genre"]))
+        war["genre"] = war["entity_id"].map(genre_map)
+
+    # Overperformance: residual of WAR against a linear fit on avg popularity,
+    # computed over eligible artists only.
+    mask = (war["role"] == "artist") & war["avg_popularity"].notna()
+    if mask.sum() >= 2:
+        x = war.loc[mask, "avg_popularity"].to_numpy()
+        y = war.loc[mask, "war_per_track"].to_numpy()
+        slope, intercept = np.polyfit(x, y, 1)
+        war.loc[mask, "overperformance"] = y - (slope * x + intercept)
+    return war
+
+
 def interpret(row: pd.Series, replacement_level: float) -> str:
     """Plain-language reading of one WAR table row."""
     direction = "adds" if row["war_per_track"] >= 0 else "costs"

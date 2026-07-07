@@ -137,6 +137,32 @@ def war_bar(war: pd.DataFrame, n: int = 20, title: str = "WAR Leaders") -> go.Fi
     return fig
 
 
+def war_vs_popularity(artist_war: pd.DataFrame) -> go.Figure:
+    """Scatter of WAR against raw popularity — the 'WAR beats popularity' view.
+
+    Points above the diagonal trend overdeliver for their fame (overperformers);
+    points below are popular-but-low-WAR (coattail riders).
+    """
+    df = artist_war.dropna(subset=["avg_popularity", "war_per_track"]).copy()
+    fig = px.scatter(
+        df, x="avg_popularity", y="war_per_track", color="overperformance",
+        hover_name="name", size="n_tracks", size_max=28,
+        color_continuous_scale="RdYlGn", template=TEMPLATE,
+        title="WAR vs raw popularity — who overdelivers for their fame",
+        labels={"avg_popularity": "avg Spotify popularity", "war_per_track": "WAR / track"},
+    )
+    # trend line
+    import numpy as np
+    x = df["avg_popularity"].to_numpy()
+    slope, intercept = np.polyfit(x, df["war_per_track"].to_numpy(), 1)
+    xs = np.array([x.min(), x.max()])
+    fig.add_trace(go.Scatter(x=xs, y=slope * xs + intercept, mode="lines",
+                             line=dict(dash="dash", color="#888"), name="expected",
+                             hoverinfo="skip"))
+    fig.update_layout(coloraxis_colorbar_title="over-<br>performance")
+    return fig
+
+
 def artist_radar(track_rows: pd.DataFrame) -> go.Figure:
     """Radar chart of an artist's average audio profile."""
     features = ["danceability", "energy", "valence", "speechiness", "acousticness", "instrumentalness"]

@@ -96,7 +96,7 @@ def main() -> None:
     # (the bulk Spotify export has none); it stays out of the tab bar entirely
     # rather than showing an empty table.
     has_producers = (war["role"] == "producer").any()
-    tab_names = ["Overview", "Artist WAR", "Sound & Success"]
+    tab_names = ["Overview", "Artist WAR", "Beyond Popularity", "Sound & Success"]
     if has_producers:
         tab_names.append("Producer WAR")
     tab_names += ["Artist Deep Dive", "Dream Team Builder", "Methodology"]
@@ -129,6 +129,63 @@ def main() -> None:
     # ---------------------------------------------------------- leaderboards
     with tab["Artist WAR"]:
         leaderboard_tab(war, "artist", "Artist WAR Leaderboard")
+
+    # ----------------------------------------------------- beyond popularity
+    with tab["Beyond Popularity"]:
+        aw = war[war["role"] == "artist"].copy()
+        st.subheader("Beyond popularity — what WAR sees that a hit-count doesn't")
+        st.caption("WAR controls for genre, sound, and collaborators, so it "
+                   "separates artists who *drive* success from those who ride it.")
+
+        if "overperformance" not in aw or aw["overperformance"].notna().sum() == 0:
+            st.info("Run `python -m src.pipeline --source bulk` to generate the "
+                    "enriched artist metrics this tab needs.")
+        else:
+            corr = aw["war_per_track"].corr(aw["avg_popularity"])
+            st.metric("Correlation of WAR with raw popularity", f"{corr:.2f}",
+                      help="High but far from 1.0 — WAR is not just fame")
+            st.plotly_chart(charts.war_vs_popularity(aw), use_container_width=True)
+
+            min_tracks = st.slider("Minimum tracks", 5, 50, 20, key="bp_min")
+            elig = aw[aw["n_tracks"] >= min_tracks]
+            cols = ["name", "war_per_track", "avg_popularity", "overperformance",
+                    "n_tracks", "genre"]
+            cols = [c for c in cols if c in elig.columns]
+
+            left, right = st.columns(2)
+            left.markdown("**Overperformers** — high WAR for their fame")
+            left.dataframe(
+                elig.nlargest(12, "overperformance")[cols].round(1),
+                use_container_width=True, hide_index=True,
+            )
+            right.markdown("**Coattail riders** — popular but low WAR")
+            right.dataframe(
+                elig.nsmallest(12, "overperformance")[cols].round(1),
+                use_container_width=True, hide_index=True,
+            )
+
+            st.divider()
+            g1, g2 = st.columns(2)
+            g1.markdown("**Best artist per genre** (highest WAR, ≥10 tracks)")
+            if "genre" in aw.columns:
+                per_genre = (
+                    aw[aw["n_tracks"] >= 10]
+                    .dropna(subset=["genre"])
+                    .sort_values("war_per_track", ascending=False)
+                    .groupby("genre")
+                    .first()
+                    .reset_index()[["genre", "name", "war_per_track", "n_tracks"]]
+                    .sort_values("war_per_track", ascending=False)
+                )
+                g1.dataframe(per_genre.round(1), use_container_width=True, hide_index=True)
+
+            g2.markdown("**Most consistent hitmakers** (high WAR, low score variance)")
+            if "score_std" in aw.columns:
+                reliable = aw[(aw["n_tracks"] >= 20) & (aw["war_per_track"] > 0)].copy()
+                reliable = reliable.nsmallest(12, "score_std")[
+                    ["name", "war_per_track", "score_std", "n_tracks"]
+                ]
+                g2.dataframe(reliable.round(1), use_container_width=True, hide_index=True)
 
     # ------------------------------------------------------- sound & success
     with tab["Sound & Success"]:
