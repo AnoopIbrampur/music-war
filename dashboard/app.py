@@ -92,11 +92,18 @@ def main() -> None:
         return
     tracks, war, bridge, artists, metrics = load_data()
 
-    tabs = st.tabs(["Overview", "Artist WAR", "Sound & Success", "Producer WAR",
-                    "Artist Deep Dive", "Dream Team Builder", "Methodology"])
+    # Producer WAR only appears when the data source actually has credits
+    # (the bulk Spotify export has none); it stays out of the tab bar entirely
+    # rather than showing an empty table.
+    has_producers = (war["role"] == "producer").any()
+    tab_names = ["Overview", "Artist WAR", "Sound & Success"]
+    if has_producers:
+        tab_names.append("Producer WAR")
+    tab_names += ["Artist Deep Dive", "Dream Team Builder", "Methodology"]
+    tab = dict(zip(tab_names, st.tabs(tab_names)))
 
     # ---------------------------------------------------------------- overview
-    with tabs[0]:
+    with tab["Overview"]:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Tracks analyzed", f"{len(tracks):,}")
         c2.metric("Eligible artists", f"{(war['role'] == 'artist').sum():,}")
@@ -120,11 +127,11 @@ def main() -> None:
             st.plotly_chart(charts.genre_popularity(tracks), use_container_width=True)
 
     # ---------------------------------------------------------- leaderboards
-    with tabs[1]:
+    with tab["Artist WAR"]:
         leaderboard_tab(war, "artist", "Artist WAR Leaderboard")
 
     # ------------------------------------------------------- sound & success
-    with tabs[2]:
+    with tab["Sound & Success"]:
         st.subheader("Sound & Success")
         st.caption("What the audio itself says about popularity — the dimension "
                    "this dataset is richest in.")
@@ -158,20 +165,12 @@ def main() -> None:
         )
 
     # ---------------------------------------------------------- producer WAR
-    with tabs[3]:
-        if (war["role"] == "producer").any():
+    if has_producers:
+        with tab["Producer WAR"]:
             leaderboard_tab(war, "producer", "Producer WAR Leaderboard")
-        else:
-            st.subheader("Producer WAR Leaderboard")
-            st.warning(
-                "No producer credits in the current data source. The bulk Spotify "
-                "export ships track/artist/audio data but no production credits. "
-                "Run MusicBrainz enrichment (`--source api` with a MUSICBRAINZ_CONTACT "
-                "set, or the enrichment step) to populate producer and songwriter WAR."
-            )
 
     # ------------------------------------------------------------ deep dive
-    with tabs[4]:
+    with tab["Artist Deep Dive"]:
         artist_war = war[war["role"] == "artist"]
         pick = st.selectbox("Choose an artist", artist_war["name"].sort_values())
         row = artist_war[artist_war["name"] == pick].iloc[0]
@@ -198,7 +197,7 @@ def main() -> None:
             )
 
     # ----------------------------------------------------------- dream team
-    with tabs[5]:
+    with tab["Dream Team Builder"]:
         st.subheader("Build your dream hit-song team")
         st.caption("Predicted score = replacement level + selected genre/era effects "
                    "+ each person's WAR coefficient.")
@@ -238,7 +237,7 @@ def main() -> None:
         )
 
     # ---------------------------------------------------------- methodology
-    with tabs[6]:
+    with tab["Methodology"]:
         st.markdown(
             f"""
 ### How Music WAR works
