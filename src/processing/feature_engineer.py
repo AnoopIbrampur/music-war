@@ -33,10 +33,12 @@ def era_bucket(year: int | float) -> str:
 
 def season_released(release_date: str | None) -> str:
     """Quarter of release (summer drops behave differently)."""
-    month = pd.to_datetime(release_date, errors="coerce").month if release_date else None
-    if month is None or pd.isna(month):
+    if release_date is None or pd.isna(release_date):
         return "unknown"
-    return f"Q{(int(month) - 1) // 3 + 1}"
+    ts = pd.to_datetime(release_date, errors="coerce")
+    if pd.isna(ts):
+        return "unknown"
+    return f"Q{(int(ts.month) - 1) // 3 + 1}"
 
 
 def tempo_bucket(tempo: float | None) -> str:
@@ -66,6 +68,9 @@ def add_audio_clusters(tracks: pd.DataFrame,
     """K-means "sound profile" clusters over the standardized audio features."""
     df = tracks.copy()
     available = [f for f in AUDIO_FEATURES if f in df.columns]
+    if not available:
+        logger.warning("No audio features available — skipping sound-profile clustering")
+        return df
     X = df[available].fillna(df[available].median())
     scaled = StandardScaler().fit_transform(X)
     km = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)

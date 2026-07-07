@@ -53,12 +53,16 @@ git clone <repo-url> && cd music-war
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Option A: full demo, no API keys needed (synthetic data, ~30s)
+# Option A: REAL DATA — 80k+ real Spotify tracks, real artist names (~2 min).
+# Downloads a public bulk Spotify export; no API keys required.
+python -m src.pipeline --source bulk
+
+# Option B: synthetic demo with known planted effects (~30s, validates the model)
 python -m src.pipeline --demo
 
-# Option B: real data (fill in .env first — see .env.example)
-cp .env.example .env
-python -m src.pipeline
+# Option C: live Spotify API (see note below — restricted for new apps)
+cp .env.example .env   # add SPOTIFY_CLIENT_ID / SECRET
+python -m src.pipeline --source api
 
 # Launch the dashboard
 streamlit run dashboard/app.py
@@ -66,6 +70,20 @@ streamlit run dashboard/app.py
 # Run the test suite (66 tests)
 pytest
 ```
+
+### A note on data sources
+
+Spotify **deprecated the audio-features, popularity, and genre fields for
+apps created after November 2024**. A newly registered app therefore can't
+pull the inputs this model needs from the live API — this is a Spotify
+platform change, not a limitation of this project. So the default and
+recommended path is `--source bulk`, which uses a **real** pre-lockdown
+Spotify export (the [Hugging Face `maharshipandya/spotify-tracks-dataset`](https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset),
+114k tracks / 114 genres, with real names, popularity, and audio features).
+Since WAR is a retrospective analysis, a snapshot export is analytically
+equivalent to a live pull — and gives far more tracks than rate-limited API
+calls would. The `--source api` path is kept intact for anyone with an
+extended-quota Spotify app.
 
 ## Key findings (demo dataset)
 

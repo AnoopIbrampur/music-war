@@ -65,11 +65,58 @@ def standardize_artist_name(name: str) -> str:
     return _WHITESPACE_RE.sub(" ", s).strip()
 
 
+# Explicit mapping for the bulk Spotify dataset's 114 genre labels. Checked
+# before the keyword fallback so exact labels (incl. dashed ones like
+# "r-n-b", "hip-hop") land in the right parent instead of "other". Mood /
+# utility tags (happy, sad, party, study, sleep, comedy) have no musical
+# genre and are intentionally left to fall through.
+DATASET_GENRE_MAP: dict[str, str] = {
+    "acoustic": "folk", "singer-songwriter": "folk", "songwriter": "folk", "guitar": "folk",
+    "afrobeat": "afrobeats",
+    "alt-rock": "rock", "alternative": "rock", "british": "rock", "goth": "rock",
+    "grunge": "rock", "hard-rock": "rock", "psych-rock": "rock", "rock-n-roll": "rock",
+    "rockabilly": "rock", "rock": "rock",
+    "ambient": "ambient", "new-age": "ambient", "chill": "ambient", "sleep": "ambient",
+    "study": "ambient",
+    "anime": "jpop", "j-dance": "jpop", "j-idol": "jpop", "j-pop": "jpop", "j-rock": "jpop",
+    "black-metal": "metal", "death-metal": "metal", "grindcore": "metal", "heavy-metal": "metal",
+    "industrial": "metal", "metal": "metal", "metalcore": "metal",
+    "bluegrass": "country", "country": "country", "honky-tonk": "country",
+    "blues": "blues",
+    "brazil": "latin", "forro": "latin", "latin": "latin", "latino": "latin", "mpb": "latin",
+    "pagode": "latin", "reggaeton": "latin", "salsa": "latin", "samba": "latin",
+    "sertanejo": "latin", "spanish": "latin", "tango": "latin",
+    "breakbeat": "electronic", "chicago-house": "electronic", "club": "electronic",
+    "dance": "electronic", "deep-house": "electronic", "detroit-techno": "electronic",
+    "drum-and-bass": "electronic", "dubstep": "electronic", "edm": "electronic",
+    "electro": "electronic", "electronic": "electronic", "garage": "electronic",
+    "hardstyle": "electronic", "house": "electronic", "idm": "electronic",
+    "minimal-techno": "electronic", "progressive-house": "electronic", "techno": "electronic",
+    "trance": "electronic", "trip-hop": "electronic",
+    "cantopop": "world", "french": "world", "german": "world", "indian": "world",
+    "iranian": "world", "malay": "world", "mandopop": "world", "swedish": "world",
+    "turkish": "world", "world-music": "world",
+    "children": "kids", "disney": "kids", "kids": "kids",
+    "classical": "classical", "opera": "classical", "piano": "classical",
+    "disco": "rnb", "funk": "rnb", "groove": "rnb", "r-n-b": "rnb", "soul": "rnb",
+    "emo": "punk", "hardcore": "punk", "punk": "punk", "punk-rock": "punk",
+    "gospel": "gospel",
+    "hip-hop": "hip_hop",
+    "indie": "indie", "indie-pop": "indie",
+    "jazz": "jazz",
+    "k-pop": "kpop",
+    "dancehall": "reggae", "dub": "reggae", "reggae": "reggae", "ska": "reggae",
+    "pop": "pop", "pop-film": "pop", "power-pop": "pop", "synth-pop": "pop",
+}
+
+
 def rollup_genre(raw_genre: str | None) -> str:
     """Map a granular Spotify genre string to one of ~20 parent genres."""
     if not raw_genre or not isinstance(raw_genre, str):
         return "other"
-    g = raw_genre.lower()
+    g = raw_genre.strip().lower()
+    if g in DATASET_GENRE_MAP:
+        return DATASET_GENRE_MAP[g]
     for keyword, parent in GENRE_ROLLUP:
         if keyword in g:
             return parent
@@ -134,7 +181,13 @@ def clean_tracks(tracks: pd.DataFrame) -> pd.DataFrame:
     if "primary_genre" in df.columns:
         df["primary_genre"] = df["primary_genre"].map(rollup_genre)
     df["release_year"] = pd.to_datetime(df["release_date"], errors="coerce").dt.year
-    df = df.dropna(subset=["release_year"])
-    df["release_year"] = df["release_year"].astype(int)
+    # Only drop rows for a missing year when the source actually carries dates.
+    # A dateless source (e.g. the bulk Spotify export) keeps year as NA, and
+    # era/longevity features degrade to "unknown" downstream.
+    if df["release_year"].notna().any():
+        df = df.dropna(subset=["release_year"])
+        df["release_year"] = df["release_year"].astype(int)
+    else:
+        df["release_year"] = pd.array([pd.NA] * len(df), dtype="Int64")
     logger.info("Cleaning: %d -> %d tracks", n0, len(df))
     return df.reset_index(drop=True)

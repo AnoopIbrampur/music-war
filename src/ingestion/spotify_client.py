@@ -127,12 +127,24 @@ class SpotifyClient:
 
     def get_audio_features(self, track_ids: list[str]) -> list[dict]:
         """Audio features for many tracks, batched at the API limit of 100."""
+        from spotipy.exceptions import SpotifyException
+
         features: list[dict] = []
         for chunk in batch(track_ids, settings.SPOTIFY_AUDIO_FEATURES_BATCH):
             key = chunk[0] + f"_{len(chunk)}"
-            result = self._cached_call(
-                "audio_features", key, lambda c=chunk: {"audio_features": self.sp.audio_features(c)}
-            )
+            try:
+                result = self._cached_call(
+                    "audio_features", key, lambda c=chunk: {"audio_features": self.sp.audio_features(c)}
+                )
+            except SpotifyException as exc:
+                if exc.http_status == 403:
+                    logger.warning(
+                        "Audio Features API returned 403 — this app lacks extended-quota "
+                        "access (Spotify restricts this endpoint for apps created after "
+                        "Nov 2024). Continuing without audio features."
+                    )
+                    return []
+                raise
             features.extend(f for f in result["audio_features"] if f)
         return features
 

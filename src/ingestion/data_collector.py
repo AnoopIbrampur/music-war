@@ -25,9 +25,12 @@ logger = logging.getLogger(__name__)
 
 CHECKPOINTS = {
     "spotify": "checkpoint_spotify_tracks.parquet",
+    "artists": "checkpoint_spotify_artists.parquet",
     "credits": "checkpoint_mb_credits.parquet",
     "billboard": "checkpoint_billboard.parquet",
 }
+
+_CREDIT_COLUMNS = ["track_id", "name", "mbid", "role"]
 
 
 class DataCollector:
@@ -59,10 +62,33 @@ class DataCollector:
             rows = collect_seed_tracks(client)
             df = pd.DataFrame(rows)
             ids = df["track_id"].dropna().tolist()
-            feats = pd.DataFrame(client.get_audio_features(ids)).rename(columns={"id": "track_id"})
+            feats = pd.DataFrame(client.get_audio_features(ids))
+            if feats.empty:
+                return df
+            feats = feats.rename(columns={"id": "track_id"})
             return df.merge(feats, on="track_id", how="left")
 
         return self._load_or_run("spotify", _run)
+
+    def collect_artists(self, tracks: pd.DataFrame) -> pd.DataFrame:
+        """Full artist metadata (name, genres, followers, popularity)."""
+        def _run() -> pd.DataFrame:
+            client = SpotifyClient()
+            unique_ids = sorted({aid for ids in tracks["artist_ids"] for aid in (ids or []) if aid})
+            artists = client.get_artists(unique_ids)
+            rows = [
+                {
+                    "artist_id": a["id"],
+                    "artist_name": a["name"],
+                    "primary_genre": (a.get("genres") or ["other"])[0],
+                    "followers": (a.get("followers") or {}).get("total"),
+                    "artist_popularity": a.get("popularity"),
+                }
+                for a in artists
+            ]
+            return pd.DataFrame(rows)
+
+        return self._load_or_run("artists", _run)
 
     def collect_credits(self, tracks: pd.DataFrame) -> pd.DataFrame:
         def _run() -> pd.DataFrame:
@@ -85,11 +111,25 @@ class DataCollector:
         return self._load_or_run("billboard", _run)
 
     # ------------------------------------------------------------------ main
-    def run(self) -> pd.DataFrame:
-        """Execute all stages and write the merged dataset to parquet."""
+    def run(self, skip_musicbrainz: bool = False, skip_billboard: bool = False) -> pd.DataFrame:
+        """Execute all stages and write the merged dataset to parquet.
+
+        ``skip_musicbrainz`` avoids the 1 req/s credit enrichment crawl
+        (useful when no MUSICBRAINZ_CONTACT is configured, or for a quick
+        demo run). ``skip_billboard`` avoids the unofficial chart scrape.
+        Both degrade gracefully: downstream code just sees empty frames.
+        """
         tracks = self.collect_spotify()
-        credits = self.collect_credits(tracks)
-        merged = self.collect_billboard(tracks)
+        self.collect_artists(tracks)
+
+        if skip_musicbrainz:
+            credits = pd.DataFrame(columns=_CREDIT_COLUMNS)
+        else:
+            credits = self.collect_credits(tracks)
+
+        merged = tracks if skip_billboard else self.collect_billboard(tracks)
+        if skip_billboard:
+            merged = merged.assign(billboard_peak_position=pd.NA, billboard_weeks_on_chart=pd.NA)
 
         producers = credits[credits["role"] == "producer"]
         writers = credits[credits["role"] == "songwriter"]

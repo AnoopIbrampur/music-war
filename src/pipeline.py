@@ -38,23 +38,49 @@ def load_demo_data():
     return ds.tracks, ds.track_artists, ds.track_producers, ds.track_songwriters, ds.artists
 
 
-def load_real_data():
+def load_bulk_data():
+    """Real Spotify data (bulk export). Real artist names; no credits."""
+    from src.ingestion.bulk_dataset import load_bulk_data as _load
+
+    tracks, track_artists, artists = _load()
+    empty_p = pd.DataFrame(columns=["track_id", "producer_id", "producer_name"])
+    empty_s = pd.DataFrame(columns=["track_id", "songwriter_id", "songwriter_name"])
+    return tracks, track_artists, empty_p, empty_s, artists
+
+
+def load_real_data(skip_musicbrainz: bool = False, skip_billboard: bool = False):
     from src.ingestion.data_collector import DataCollector
     from src.processing.transformer import credits_to_bridges, spotify_rows_to_bridge
 
     collector = DataCollector()
-    merged = collector.run()
-    credits = pd.read_parquet(settings.PROCESSED_DIR / "checkpoint_mb_credits.parquet")
+    merged = collector.run(skip_musicbrainz=skip_musicbrainz, skip_billboard=skip_billboard)
+    artists = pd.read_parquet(settings.PROCESSED_DIR / "checkpoint_spotify_artists.parquet")
+    if skip_musicbrainz:
+        credits = pd.DataFrame(columns=["track_id", "name", "mbid", "role"])
+    else:
+        credits = pd.read_parquet(settings.PROCESSED_DIR / "checkpoint_mb_credits.parquet")
     track_producers, track_songwriters = credits_to_bridges(credits)
     track_artists = spotify_rows_to_bridge(merged)
-    artists = pd.DataFrame()  # enriched separately via SpotifyClient.get_artists
+
+    # Spotify tracks carry no genre of their own — derive it from the
+    # primary artist's genre so the model still has a genre control.
+    genre_map = dict(zip(artists["artist_id"], artists["primary_genre"]))
+    primary = track_artists[track_artists["role"] == "primary_artist"].set_index("track_id")["artist_id"]
+    merged = merged.assign(primary_genre=merged["track_id"].map(primary).map(genre_map))
+
     return merged, track_artists, track_producers, track_songwriters, artists
 
 
-def run(demo: bool = False, bootstrap: bool = False) -> dict:
-    tracks, track_artists, track_producers, track_songwriters, artists = (
-        load_demo_data() if demo else load_real_data()
-    )
+def run(demo: bool = False, bootstrap: bool = False, source: str = "api",
+        skip_musicbrainz: bool = False, skip_billboard: bool = False) -> dict:
+    if demo or source == "demo":
+        tracks, track_artists, track_producers, track_songwriters, artists = load_demo_data()
+    elif source == "bulk":
+        tracks, track_artists, track_producers, track_songwriters, artists = load_bulk_data()
+    else:
+        tracks, track_artists, track_producers, track_songwriters, artists = load_real_data(
+            skip_musicbrainz=skip_musicbrainz, skip_billboard=skip_billboard
+        )
 
     # ---- processing
     tracks = clean_tracks(tracks)
@@ -106,6 +132,14 @@ def run(demo: bool = False, bootstrap: bool = False) -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Music WAR pipeline")
     parser.add_argument("--demo", action="store_true", help="use synthetic data (no API keys)")
+    parser.add_argument("--source", choices=["api", "bulk", "demo"], default="api",
+                        help="api = live Spotify (locked for new apps); "
+                             "bulk = real Spotify bulk export (real names); demo = synthetic")
     parser.add_argument("--bootstrap", action="store_true", help="compute bootstrap CIs (slower)")
+    parser.add_argument("--skip-musicbrainz", action="store_true",
+                        help="skip producer/songwriter credit enrichment (no MB contact needed)")
+    parser.add_argument("--skip-billboard", action="store_true",
+                        help="skip Billboard chart scraping (popularity-only success score)")
     args = parser.parse_args()
-    run(demo=args.demo, bootstrap=args.bootstrap)
+    run(demo=args.demo, bootstrap=args.bootstrap, source=args.source,
+        skip_musicbrainz=args.skip_musicbrainz, skip_billboard=args.skip_billboard)
