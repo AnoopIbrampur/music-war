@@ -1,153 +1,101 @@
-# 🎵 Music WAR — Wins Above Replacement for the Music Industry
+# Music WAR — Wins Above Replacement for music
 
-**Sabermetrics for songs: a sparse-regression model that isolates how many
-success-score points each artist, producer, and songwriter adds to a track
-above a replacement-level substitute.**
+Baseball has a stat called WAR: roughly, how many more games a team wins by playing someone instead of a freely available replacement. The trick is that it measures a player against a baseline and controls for context, so a shortstop in a pitcher's park gets judged fairly.
 
-Baseball's WAR asks how many wins a player adds over freely available
-replacement talent. Inspired by the "Moneyball for Movies" approach (sparse
-matrix regressions on IMDb credits), Music WAR asks the same question of
-music: when Metro Boomin produces a track, or Drake jumps on a feature, how
-much of the resulting success is *them* — and how much is genre, era, and
-sound that any replacement-level person would have delivered anyway?
+I wanted to try the same idea on music. When a track does well, how much of that is the artist actually being good, and how much is just the genre being popular, the sound being on-trend, or a bigger name carrying the feature? This project fits a regression that pulls those apart and gives every artist a single number: the points they add to a track's success above a replacement-level artist, holding genre, sound, and collaborators fixed.
+
+The most fun result: WAR and raw popularity only correlate about 0.80. The gap is where it gets interesting. Bad Bunny and Rammstein overdeliver even for how famous they are. Justin Bieber and J Balvin land *negative* WAR despite being huge, because their hits are often collaborations where, once you control for the genre and the other artists, their own marginal contribution trails what a replacement would give you. A plain popularity chart can't tell you that.
+
+## What it runs on
+
+Here's the honest version of the data story. Spotify shut off the API endpoints this project needs (audio features, popularity, genres) for any app created after November 2024. A freshly registered key can authenticate and not much else. So the default path uses a real Spotify export published on Hugging Face instead of the live API: 114,000 tracks across 114 genres, with real names, popularity, and audio features baked in from before the lockdown. After cleaning that's about 80,000 unique tracks and 4,580 artists with enough credits to model.
+
+Since WAR is a look-back analysis and Spotify popularity is a snapshot either way, a pre-lockdown export gives up nothing analytically, and it hands you far more tracks than you could ever pull through a rate-limited API. The live-API code still ships for anyone who has an older app with extended access.
 
 ## How it works
 
-1. **Ingest** — 50k-track target from Spotify (metadata, audio features,
-   artists), enriched with producer/songwriter credits from MusicBrainz and
-   25 years of Billboard Hot 100 history. Checkpointed, cached, rate-limited.
-2. **Score** — every track gets a 0–100 **composite success score**:
-   Spotify popularity (40%) + Billboard peak (30%) + weeks on chart (20%) +
-   longevity bonus (10%).
-3. **Model** — a `scipy.sparse` design matrix with one binary column per
-   eligible person (≥5 credits) plus genre/era/sound controls, fed to a
-   cross-validated **ridge regression**. Each person's coefficient *is*
-   their WAR. A parallel **lasso** flags which effects are robust.
-4. **Explore** — a 6-tab Streamlit dashboard: leaderboards, artist deep
-   dives, and a Dream Team Builder that predicts the score of your
-   hypothetical collab.
+Every track gets a 0–100 success score. On the export that score is driven by Spotify popularity; when Billboard chart data is available (the API path), it also folds in peak position, weeks on chart, and a longevity bonus.
+
+The model is a big sparse matrix, one row per track. Most columns are a single on/off flag for each artist with at least five credits, and the rest are controls: genre, the track's sound profile from a k-means clustering of its audio features, tempo and duration buckets, explicit flag, and how many artists are on it. Featured artists count for half a top billing. A ridge regression predicts the success score, and the coefficient on an artist's column is their WAR. Everyone below the credit threshold dissolves into the intercept, which is exactly what "replacement level" should mean. A lasso runs alongside it and zeroes out the weak effects, so anyone who survives both models is a safer bet. Bootstrap resampling gives each artist a 95% confidence interval.
+
+On the real data the model lands at R² 0.46 on held-out tracks, against 0.16 for a version that only knows genre and sound and nothing about who made the track. That jump is the whole point: who is on a record explains far more than what it sounds like.
 
 ## Architecture
 
 ```
-Spotify ──┐
-MusicBrainz ─┼─► data_collector (checkpoint/resume, JSON cache)
-Billboard ──┘        │
-                     ▼
-        cleaner → feature_engineer → star schema (SQLAlchemy)
-                     │
-                     ▼
-   sparse matrix → RidgeCV / LassoCV → WAR table + bootstrap CIs
-                     │
-                     ▼
-            Streamlit dashboard (Plotly)
+Spotify API (locked for new apps) ─┐
+Hugging Face bulk export ──────────┼─► ingestion → cleaner → feature_engineer
+MusicBrainz / Billboard (optional) ┘         │
+                                             ▼
+                                   star schema (SQLAlchemy)
+                                             │
+                                             ▼
+                            sparse matrix → RidgeCV / LassoCV
+                                             │
+                                             ▼
+                              WAR table + bootstrap CIs → Streamlit
 ```
 
-Full diagrams: [docs/architecture.md](docs/architecture.md) ·
-Statistical details: [docs/methodology.md](docs/methodology.md)
+Diagrams: [docs/architecture.md](docs/architecture.md). Statistical detail: [docs/methodology.md](docs/methodology.md).
 
 ## Quickstart
 
 ```bash
-git clone <repo-url> && cd music-war
+git clone https://github.com/AnoopIbrampur/music-war && cd music-war
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Option A: REAL DATA — 80k+ real Spotify tracks, real artist names (~2 min).
-# Downloads a public bulk Spotify export; no API keys required.
+# Real data: ~80k Spotify tracks with real names. Downloads the export, no keys.
 python -m src.pipeline --source bulk
 
-# Option B: synthetic demo with known planted effects (~30s, validates the model)
+# Synthetic data with known planted effects. Runs in ~30s and validates the model.
 python -m src.pipeline --demo
 
-# Option C: live Spotify API (see note below — restricted for new apps)
-cp .env.example .env   # add SPOTIFY_CLIENT_ID / SECRET
+# Live Spotify API. Needs an older app with extended access (see the data note).
+cp .env.example .env
 python -m src.pipeline --source api
 
-# Launch the dashboard
 streamlit run dashboard/app.py
-
-# Run the test suite (66 tests)
 pytest
 ```
 
-### A note on data sources
+## What the model found (real data)
 
-Spotify **deprecated the audio-features, popularity, and genre fields for
-apps created after November 2024**. A newly registered app therefore can't
-pull the inputs this model needs from the live API — this is a Spotify
-platform change, not a limitation of this project. So the default and
-recommended path is `--source bulk`, which uses a **real** pre-lockdown
-Spotify export (the [Hugging Face `maharshipandya/spotify-tracks-dataset`](https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset),
-114k tracks / 114 genres, with real names, popularity, and audio features).
-Since WAR is a retrospective analysis, a snapshot export is analytically
-equivalent to a live pull — and gives far more tracks than rate-limited API
-calls would. The `--source api` path is kept intact for anyone with an
-extended-quota Spotify app.
+1. WAR is not a synonym for popularity. They track together at 0.80, and the leftover is the signal.
+2. Overperformers, who beat their own fame: Bad Bunny (WAR 29.8, 95% CI 25.8–34.8), Rammstein, Nicki Minaj, Bring Me The Horizon.
+3. Coattail riders, popular but with negative WAR once you control for context: Justin Bieber (−15.3), J Balvin (−15.4).
+4. Total-WAR leaders reward being both good and prolific: The Beatles, Arctic Monkeys, Arijit Singh, Bad Bunny.
+5. Best in their lane: Doja Cat tops dance, System Of A Down tops metal. WAR lets you compare within a genre instead of across.
+6. Instrumentalness is the strongest single audio predictor of popularity, and it's negative (r = −0.19): tracks with vocals win. Every audio feature on its own is weak, which is exactly why the artist columns carry so much of the model.
+7. Explicit tracks average about four popularity points higher, and tracks with two or three credited artists beat solo tracks.
 
-## Key findings (real data — 80,393 Spotify tracks, 4,580 artists)
-
-Model: ridge (α=1, 5-fold CV), test **R² = 0.46 vs 0.16** for a structure-only
-baseline — *who* is on a track explains **~30% more variance** than genre and
-sound alone. That gap is the whole thesis, and the findings below flow from it.
-
-1. **WAR is not just popularity** (they correlate 0.80, not 1.0). The gap is
-   the insight: some artists overperform their fame, others ride it.
-2. **Overperformers** — deliver more than a replacement even at their fame
-   level: **Bad Bunny** (WAR 29.8, 95% CI 25.8–34.8), **Rammstein**,
-   **Nicki Minaj**, **Bring Me The Horizon**.
-3. **Coattail riders** — popular but *negative* WAR: **Justin Bieber**
-   (−15.3) and **J Balvin** (−15.4). Their hits are often collabs where,
-   controlling for genre and co-artists, their marginal contribution trails a
-   replacement's. A naive popularity ranking misses this entirely.
-4. **Total-WAR leaders reward prolific excellence**: **The Beatles**,
-   **Arctic Monkeys**, **Arijit Singh**, **Bad Bunny**.
-5. **Best-in-genre**: Doja Cat (dance), System Of A Down (metal) — WAR lets
-   you compare like-for-like within a genre.
-6. **Instrumentalness is the #1 audio popularity-killer** (r = −0.19); every
-   audio feature on its own is weak (|r| < 0.2), which is *why* artist
-   identity dominates.
-7. **Explicit tracks average +4.3 popularity points**, and **collaborations
-   beat solo tracks** — features and co-bills lift outcomes.
-8. **Bootstrap 95% CIs** accompany every artist's WAR, separating robust
-   rankings from small-sample noise; **lasso agreement** flags the most
-   defensible names.
-
-*Names are real; `--source demo` reproduces the same structure on synthetic
-data with known planted effects (recovered at r > 0.9), which is how the model
-itself is validated.*
+The `--demo` run reproduces the same pipeline on synthetic data with effects I planted on purpose, and the model recovers them at r > 0.9. That's how I check the machinery isn't fooling itself before trusting it on real names.
 
 ## Repository layout
 
 ```
-config/settings.py      all constants + .env loading
+config/settings.py      constants and .env loading
 src/ingestion/          spotify_client, musicbrainz_client, billboard_client,
-                        data_collector (orchestration), synthetic (demo data)
+                        bulk_dataset (real export), synthetic (demo), data_collector
 src/processing/         cleaner, transformer, feature_engineer
 src/modeling/           sparse_matrix_builder, war_calculator, model_evaluator
 src/database/           SQLAlchemy star schema + db_manager
 src/visualization/      Plotly chart builders
-dashboard/app.py        Streamlit app (6 tabs)
-notebooks/              exploration → features → modeling walkthroughs
-tests/                  66 pytest cases incl. ground-truth recovery test
+dashboard/app.py        Streamlit app
+notebooks/              exploration, feature engineering, modeling walkthroughs
+tests/                  67 pytest cases, including a ground-truth recovery test
 docs/                   methodology.md, architecture.md
 ```
 
 ## Tech stack
 
-Python · pandas · NumPy · SciPy (sparse) · scikit-learn (RidgeCV/LassoCV/
-KMeans) · SQLAlchemy (SQLite/PostgreSQL) · spotipy · musicbrainzngs ·
-billboard.py · rapidfuzz · Streamlit · Plotly · pytest
+Python, pandas, NumPy, SciPy (sparse matrices), scikit-learn (RidgeCV, LassoCV, KMeans), SQLAlchemy on SQLite or PostgreSQL, spotipy, musicbrainzngs, billboard.py, rapidfuzz, Streamlit, Plotly, pytest.
 
-## Limitations & future work
+## Limitations
 
-- Spotify popularity is a **rolling** metric, not historical — older
-  catalogues are penalised; a longevity bonus partially compensates.
-- WAR is **associational**, not causal: stars may get first pick of songs.
-- Perfectly collinear collaborators (always-together duos) split credit.
-- Future: play-count panels for a true time-series target, position-style
-  adjustments per role, hierarchical shrinkage by genre, credit coverage
-  beyond MusicBrainz (Genius, Discogs).
+Spotify popularity is a rolling number, not a historical one, so older catalogues get scored on how they stream today. WAR is a correlation, not proof of cause: stars get first pick of good songs, and the model can't separate talent from that head start. Duos who always record together share one effective coefficient that ridge splits between them. The export has no release dates or production credits, so there's no era analysis and no producer or songwriter WAR unless you enrich with MusicBrainz on the API path.
+
+Things I'd add next: play-count panel data for a real time series instead of a popularity snapshot, per-role adjustments like baseball's positional ones, and credit coverage from Genius or Discogs.
 
 ## License
 
